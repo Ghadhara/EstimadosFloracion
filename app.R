@@ -107,7 +107,7 @@ ui <- dashboardPage(
   dashboardHeader(title = tags$span(
     tags$img(src="https://img.icons8.com/emoji/28/blossom-emoji.png",
              style="vertical-align:middle; margin-right:6px;"),
-    "Planificador de Crisantemos"
+    "ChrysaPlanner"
   )),
   
   dashboardSidebar(
@@ -361,6 +361,17 @@ ui <- dashboardPage(
                 )
               ),
               fluidRow(
+                box(title = "🔍 Detalle por semana seleccionada", status = "success",
+                    solidHeader = TRUE, width = 12,
+                    fluidRow(
+                      column(5, uiOutput("ui_selector_semana_resumen")),
+                      column(7, uiOutput("ui_infoboxes_semana_sel"))
+                    ),
+                    br(),
+                    DTOutput("tabla_detalle_semana")
+                )
+              ),
+              fluidRow(
                 box(title = "Esquejes sembrados por semana", status = "success",
                     solidHeader = TRUE, width = 12,
                     plotlyOutput("grafico_resumen_siembra", height = "400px")
@@ -469,7 +480,7 @@ server <- function(input, output, session) {
       rename(`Día`=dia_num, `Fecha de Corte`=fecha_corte,
              Semana=etiqueta_sw, `% Corte`=pct, `Tallos Estimados`=tallos) %>%
       mutate(`% Corte` = percent(`% Corte`, accuracy=1)) %>%
-      datatable(options=list(dom='t', pageLength=7), rownames=FALSE) %>%
+      datatable(options=list(dom='t', pageLength=10), rownames=FALSE) %>%
       formatStyle("Tallos Estimados",
                   background=styleColorBar(range(df$tallos), "#a5d6a7"),
                   backgroundSize="90% 70%", backgroundRepeat="no-repeat",
@@ -666,7 +677,7 @@ server <- function(input, output, session) {
       selection = "none",
       options  = list(
         dom        = 'tip',
-        pageLength = 15,
+        pageLength = 10,
         scrollX    = TRUE,
         columnDefs = list(list(orderable=FALSE, targets=0))
       )
@@ -808,7 +819,9 @@ server <- function(input, output, session) {
              `Fecha Siembra`=fecha_siembra, Esquejes=esquejes) %>%
       mutate(`Fecha Siembra`=format(`Fecha Siembra`, "%d/%m/%Y")) %>%
       datatable(selection="single", rownames=TRUE,
-                options=list(pageLength=15, scrollX=TRUE))
+                options=list(pageLength=10, scrollX=TRUE,
+                             lengthMenu=list(c(10,25,50,-1),c("10","25","50","Todos")),
+                             order=list(list(4,"desc"))))
   })
   
   output$ui_borrar_fila <- renderUI({
@@ -883,12 +896,89 @@ server <- function(input, output, session) {
              Producto=producto, Variedad=variedad,
              `Esquejes Sembrados`=esquejes_total, `Camas`=n_camas) %>%
       datatable(rownames=FALSE,
-                options=list(pageLength=20, scrollX=TRUE,
-                             order=list(list(0,"asc"),list(1,"asc")))) %>%
+                options=list(pageLength=10, scrollX=TRUE,
+                             lengthMenu=list(c(10,25,50,-1),c("10","25","50","Todos")),
+                             order=list(list(5,"desc")))) %>%
       formatStyle("Esquejes Sembrados",
                   background=styleColorBar(range(df$esquejes_total), "#a5d6a7"),
                   backgroundSize="90% 70%", backgroundRepeat="no-repeat",
                   backgroundPosition="center")
+  })
+  
+  output$ui_selector_semana_resumen <- renderUI({
+    df <- resumen_siembras(); req(!is.null(df), nrow(df)>0)
+    semanas <- df %>% arrange(anio, semana_num) %>% pull(etiqueta_sw) %>% unique()
+    selectInput("semana_resumen_sel", "Selecciona una semana:",
+                choices = semanas, selected = semanas[1], width = "100%")
+  })
+  
+  detalle_semana_sel <- reactive({
+    req(input$semana_resumen_sel)
+    df <- resumen_siembras(); req(!is.null(df))
+    df %>% filter(etiqueta_sw == input$semana_resumen_sel)
+  })
+  
+  output$ui_infoboxes_semana_sel <- renderUI({
+    df <- detalle_semana_sel(); req(!is.null(df), nrow(df)>0)
+    
+    totales_prod <- df %>%
+      group_by(producto) %>%
+      summarise(esq=sum(esquejes_total), cam=sum(n_camas), .groups="drop") %>%
+      arrange(desc(esq))
+    
+    gran_total <- sum(df$esquejes_total)
+    total_camas <- sum(df$n_camas)
+    
+    tagList(
+      fluidRow(
+        lapply(seq_len(nrow(totales_prod)), function(i) {
+          column(3,
+                 div(style="background:#2f8d96;color:white;border-radius:8px;
+                        padding:10px 14px;text-align:center;margin-bottom:8px;
+                        box-shadow:0 2px 5px rgba(0,0,0,0.15);",
+                     div(style="font-size:11px;opacity:.85;text-transform:uppercase;
+                          letter-spacing:.5px;", totales_prod$producto[i]),
+                     div(style="font-size:22px;font-weight:700;margin:3px 0;",
+                         format(totales_prod$esq[i], big.mark=",")),
+                     div(style="font-size:11px;opacity:.75;",
+                         paste0(totales_prod$cam[i], " cama(s)"))
+                 )
+          )
+        })
+      ),
+      fluidRow(
+        column(4,
+               div(style="background:#1a5c63;color:white;border-radius:8px;
+                      padding:10px 14px;text-align:center;margin-bottom:8px;
+                      box-shadow:0 2px 5px rgba(0,0,0,0.2);",
+                   div(style="font-size:11px;opacity:.85;text-transform:uppercase;
+                        letter-spacing:.5px;", "TOTAL SEMANA"),
+                   div(style="font-size:22px;font-weight:700;margin:3px 0;",
+                       format(gran_total, big.mark=",")),
+                   div(style="font-size:11px;opacity:.75;",
+                       paste0(total_camas, " camas en total"))
+               )
+        )
+      )
+    )
+  })
+  
+  output$tabla_detalle_semana <- renderDT({
+    df <- detalle_semana_sel(); req(!is.null(df), nrow(df)>0)
+    df %>%
+      select(producto, variedad, n_camas, esquejes_total) %>%
+      rename(Producto=producto, Variedad=variedad,
+             Camas=n_camas, `Esquejes Sembrados`=esquejes_total) %>%
+      arrange(Producto, Variedad) %>%
+      datatable(rownames=FALSE,
+                options=list(dom='tip', pageLength=10, scrollX=TRUE,
+                             lengthMenu=list(c(10,25,50,-1),c("10","25","50","Todos")),
+                             order=list(list(3,"desc")))) %>%
+      formatStyle("Esquejes Sembrados",
+                  background=styleColorBar(range(df$esquejes_total), "#9dd8dc"),
+                  backgroundSize="90% 70%", backgroundRepeat="no-repeat",
+                  backgroundPosition="center") %>%
+      formatStyle("Producto", fontWeight="bold")
   })
   
   output$grafico_resumen_siembra <- renderPlotly({
@@ -943,7 +1033,10 @@ server <- function(input, output, session) {
       rename(Semana=etiqueta_sw, Variedad=variedad, Producto=producto,
              `Tallos Estimados`=tallos_total) %>%
       select(Semana, Producto, Variedad, `Tallos Estimados`) %>%
-      datatable(rownames=FALSE, options=list(pageLength=25, scrollX=TRUE)) %>%
+      datatable(rownames=FALSE,
+                options=list(pageLength=10, scrollX=TRUE,
+                             lengthMenu=list(c(10,25,50,-1),c("10","25","50","Todos")),
+                             order=list(list(3,"desc")))) %>%
       formatStyle("Tallos Estimados",
                   background=styleColorBar(range(df$tallos_total), "#81c784"),
                   backgroundSize="90% 70%", backgroundRepeat="no-repeat",
@@ -1016,7 +1109,10 @@ server <- function(input, output, session) {
              `Último Corte`=ultimo_corte) %>%
       mutate(`Fecha Siembra`=format(`Fecha Siembra`, "%d/%m/%Y"),
              `Último Corte` =format(`Último Corte`,  "%d/%m/%Y")) %>%
-      datatable(rownames=FALSE, options=list(pageLength=20, scrollX=TRUE)) %>%
+      datatable(rownames=FALSE,
+                options=list(pageLength=10, scrollX=TRUE,
+                             lengthMenu=list(c(10,25,50,-1),c("10","25","50","Todos")),
+                             order=list(list(6,"asc")))) %>%
       formatStyle("Último Corte", color="#c62828", fontWeight="bold")
   })
   
