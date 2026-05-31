@@ -107,7 +107,7 @@ ui <- dashboardPage(
   dashboardHeader(title = tags$span(
     tags$img(src="https://img.icons8.com/emoji/28/blossom-emoji.png",
              style="vertical-align:middle; margin-right:6px;"),
-    "ChrysaPlanner"
+    "Planificador de Crisantemos"
   )),
   
   dashboardSidebar(
@@ -234,18 +234,21 @@ ui <- dashboardPage(
                        )
                 ),
                 column(6,
-                       h3(style="color:#1a5c63;", "⚙ ¿Cómo funciona el cálculo?"),
-                       box(width=12, status="info",
-                           tags$ul(style="font-size:14px; line-height:1.9;",
-                                   tags$li(tags$b("DIA 4"), " = Fecha de floración máxima = Fecha siembra + Ciclo de la variedad"),
-                                   tags$li(tags$b("DIA 1–3"), " ocurren antes del DIA 4 (offset negativo)"),
-                                   tags$li(tags$b("DIA 5–7"), " ocurren después del DIA 4 (offset positivo)"),
-                                   tags$li(tags$b("Tallos"), " = Esquejes × % de corte del día"),
-                                   tags$li(tags$b("Semanas"), " comienzan en lunes y terminan en domingo (ISO)"),
-                                   tags$li(tags$b("Noches Luz"), " está registrada por variedad para referencia del cultivo")
-                           )
+                       h3(style="color:#1a5c63; margin-bottom:12px;", "⚙ ¿Cómo funciona el cálculo?"),
+                       div(
+                         style = paste0(
+                           "background:#f0fafb; border:1px solid #b2dde0; border-radius:8px;",
+                           "padding:16px 20px; margin-bottom:20px;"
+                         ),
+                         tags$ul(style="font-size:14px; line-height:2.0; margin:0; padding-left:20px;",
+                                 tags$li(tags$b("DIA 4"), " = Fecha de floración máxima = Fecha siembra + Ciclo de la variedad"),
+                                 tags$li(tags$b("DIA 1–3"), " ocurren antes del DIA 4 (offset negativo)"),
+                                 tags$li(tags$b("DIA 5–7"), " ocurren después del DIA 4 (offset positivo)"),
+                                 tags$li(tags$b("Tallos"), " = Esquejes × % de corte del día"),
+                                 tags$li(tags$b("Semanas"), " comienzan en lunes y terminan en domingo (ISO)"),
+                                 tags$li(tags$b("Noches Luz"), " está registrada por variedad para referencia del cultivo")
+                         )
                        ),
-                       br(),
                        div(class="firma-box",
                            h4(style="color:#1a5c63; margin-top:0;", "👨‍💻 Desarrollado por"),
                            p(style="font-size:15px; margin:6px 0;",
@@ -253,7 +256,7 @@ ui <- dashboardPage(
                            p(style="font-size:15px; margin:6px 0;",
                              tags$b("Claude"), " · Asistente de IA de Anthropic 🤖"),
                            br(),
-                           tags$span(class="badge-teal", "v2.0"),
+                           tags$span(class="badge-teal", "v2.2"),
                            tags$span(style="margin-left:8px; color:#666; font-size:12px;",
                                      paste0("Última actualización: ", format(Sys.Date(), "%d/%m/%Y")))
                        )
@@ -399,6 +402,28 @@ ui <- dashboardPage(
                 box(title = "Gráfico de Estimación", status = "success",
                     solidHeader = TRUE, width = 12,
                     plotlyOutput("grafico_estimacion", height = "450px")
+                )
+              ),
+              
+              # ── Detalle diario por variedad ───────────────────────────────────
+              fluidRow(
+                box(title = "📅 Detalle diario por variedad — lunes a domingo",
+                    status = "success", solidHeader = TRUE, width = 12,
+                    p("Filtra por semana, producto y variedad (puedes seleccionar varios) para ver
+               los tallos proyectados día a día con los bloques y camas de origen."),
+                    fluidRow(
+                      column(3, uiOutput("ui_semana_detalle_dia")),
+                      column(3, uiOutput("ui_producto_detalle_dia")),
+                      column(3, uiOutput("ui_variedad_detalle_dia")),
+                      column(3, br(),
+                             actionButton("btn_ver_detalle_dia", "📅 Ver detalle diario",
+                                          class = "btn-success btn-lg", width = "100%")
+                      )
+                    ),
+                    br(),
+                    uiOutput("ui_cards_dias"),
+                    br(),
+                    DTOutput("tabla_detalle_dia")
                 )
               )
       ),
@@ -1067,7 +1092,174 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip="text")
   })
   
-  # ══ TAB 5: CAMAS CORTADAS ═════════════════════════════════════════════════
+  # ── Detalle diario por variedad ───────────────────────────────────────────
+  
+  # Selector de semana: todas las semanas con proyecciones
+  output$ui_semana_detalle_dia <- renderUI({
+    df <- resumen_floracion()
+    if (is.null(df) || nrow(df) == 0) return(p("Sin datos aún."))
+    semanas <- df %>% arrange(anio, semana_num) %>% pull(etiqueta_sw) %>% unique()
+    selectInput("semana_dia_sel", "Semana:", choices = semanas, width = "100%")
+  })
+  
+  # Selector de producto: filtrado por semana
+  output$ui_producto_detalle_dia <- renderUI({
+    req(input$semana_dia_sel)
+    df <- todas_proyecciones(); req(!is.null(df))
+    prods <- df %>%
+      filter(etiqueta_sw == input$semana_dia_sel) %>%
+      pull(producto) %>% unique() %>% sort()
+    pickerInput(
+      "producto_dia_sel", "Producto:",
+      choices  = prods,
+      selected = prods,
+      multiple = TRUE,
+      options  = list(
+        `actions-box`         = TRUE,
+        `select-all-text`     = "Todos",
+        `deselect-all-text`   = "Ninguno",
+        `selected-text-format`= "count > 1",
+        `count-selected-text` = "{0} productos",
+        size = 8
+      ),
+      width = "100%"
+    )
+  })
+  
+  # Selector de variedad: filtrado por semana + productos seleccionados, multiselect
+  output$ui_variedad_detalle_dia <- renderUI({
+    req(input$semana_dia_sel, input$producto_dia_sel)
+    df <- todas_proyecciones(); req(!is.null(df))
+    vars <- df %>%
+      filter(etiqueta_sw == input$semana_dia_sel,
+             producto    %in% input$producto_dia_sel) %>%
+      pull(variedad) %>% unique() %>% sort()
+    pickerInput(
+      "variedad_dia_sel", "Variedad:",
+      choices  = vars,
+      selected = vars,
+      multiple = TRUE,
+      options  = list(
+        `actions-box`         = TRUE,
+        `select-all-text`     = "Todas",
+        `deselect-all-text`   = "Ninguna",
+        `selected-text-format`= "count > 1",
+        `count-selected-text` = "{0} variedades",
+        `live-search`         = TRUE,
+        size = 10
+      ),
+      width = "100%"
+    )
+  })
+  
+  # Datos filtrados (1 fila = 1 cama × 1 día)
+  detalle_dia_data <- eventReactive(input$btn_ver_detalle_dia, {
+    req(input$semana_dia_sel,
+        length(input$producto_dia_sel) > 0,
+        length(input$variedad_dia_sel) > 0)
+    df <- todas_proyecciones(); req(!is.null(df))
+    df %>%
+      filter(etiqueta_sw == input$semana_dia_sel,
+             producto    %in% input$producto_dia_sel,
+             variedad    %in% input$variedad_dia_sel) %>%
+      arrange(fecha_corte, bloque, cama)
+  })
+  
+  # Tarjetas lun–dom con total de tallos
+  output$ui_cards_dias <- renderUI({
+    df <- detalle_dia_data()
+    req(!is.null(df), nrow(df) > 0)
+    
+    dias_es <- c("Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo")
+    lun     <- lunes_semana(min(df$fecha_corte))
+    
+    tarjetas <- lapply(0:6, function(i) {
+      f     <- lun + i
+      sub   <- df %>% filter(fecha_corte == f)
+      total   <- sum(sub$tallos, na.rm = TRUE)
+      n_camas <- nrow(sub)
+      bg    <- if (total > 0) "#2f8d96" else "#b0bec5"
+      bg_dk <- if (total > 0) "#1a5c63" else "#90a4ae"
+      
+      div(
+        style = paste0(
+          "background:", bg, ";color:white;border-radius:10px;",
+          "padding:12px 8px;text-align:center;margin:0 5px 10px 5px;",
+          "flex:1;min-width:120px;max-width:160px;",
+          "box-shadow:0 2px 6px rgba(0,0,0,0.18);"
+        ),
+        div(style = "font-size:12px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:.4px;opacity:.9;", dias_es[i + 1]),
+        div(style = "font-size:11px;opacity:.8;margin:2px 0;", format(f, "%d/%m/%Y")),
+        div(style = paste0("font-size:24px;font-weight:800;margin:6px 0;",
+                           "background:", bg_dk, ";border-radius:6px;padding:4px;"),
+            if (total > 0) format(total, big.mark = ",") else "—"),
+        div(style = "font-size:11px;opacity:.8;",
+            if (n_camas > 0) paste0(n_camas, " cama(s)") else "sin corte")
+      )
+    })
+    
+    div(style = "display:flex; flex-wrap:wrap; gap:6px; padding:4px 0;",
+        tagList(tarjetas))
+  })
+  
+  # Tabla detallada incluyendo variedad y producto cuando hay selección múltiple
+  output$tabla_detalle_dia <- renderDT({
+    df <- detalle_dia_data()
+    req(!is.null(df), nrow(df) > 0)
+    
+    dias_es  <- c("Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo")
+    multi_var  <- length(unique(df$variedad))  > 1
+    multi_prod <- length(unique(df$producto)) > 1
+    
+    df_show <- df %>%
+      mutate(
+        dia_semana = dias_es[wday(fecha_corte, week_start = 1)],
+        fecha_fmt  = format(fecha_corte, "%d/%m/%Y"),
+        pct_fmt    = scales::percent(pct, accuracy = 1)
+      )
+    
+    # Columnas base; insertar producto y/o variedad si hay múltiples
+    cols_sel <- c("dia_semana","fecha_fmt")
+    if (multi_prod) cols_sel <- c(cols_sel, "producto")
+    if (multi_var)  cols_sel <- c(cols_sel, "variedad")
+    cols_sel <- c(cols_sel, "bloque","cama","pct_fmt","tallos")
+    
+    df_show <- df_show %>% select(all_of(cols_sel))
+    
+    rename_map <- c(
+      dia_semana = "Día",    fecha_fmt  = "Fecha",
+      producto   = "Producto", variedad = "Variedad",
+      bloque     = "Bloque", cama       = "Cama",
+      pct_fmt    = "% Corte", tallos    = "Tallos"
+    )
+    names(df_show) <- rename_map[names(df_show)]
+    
+    col_tallos <- which(names(df_show) == "Tallos") - 1  # 0-indexed para DT
+    
+    datatable(
+      df_show,
+      rownames = FALSE,
+      options  = list(
+        pageLength = 10,
+        scrollX    = TRUE,
+        lengthMenu = list(c(10,25,50,-1), c("10","25","50","Todos")),
+        order      = list(list(1,"asc"), list(col_tallos,"desc")),
+        columnDefs = list(list(className="dt-center", targets="_all"))
+      )
+    ) %>%
+      formatStyle("Día",
+                  fontWeight = "bold", color = "white",
+                  backgroundColor = styleEqual(
+                    c("Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"),
+                    rep("#2f8d96", 7)
+                  )) %>%
+      formatStyle("Tallos",
+                  background         = styleColorBar(range(df$tallos), "#9dd8dc"),
+                  backgroundSize     = "90% 70%",
+                  backgroundRepeat   = "no-repeat",
+                  backgroundPosition = "center")
+  })
   
   ultimo_corte_por_siembra <- reactive({
     df <- todas_proyecciones()
